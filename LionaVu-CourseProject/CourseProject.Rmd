@@ -1,0 +1,627 @@
+---
+title: "CourseProject"
+author: "Liona"
+date: "06/06/2020"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r }
+setwd("~/Desktop/Molecular Genetics/MMG1002Programming/LionaVu-CourseProject")
+
+#### 1. Read in ClinGen file, GRCh38 version ####
+ClinGen_database <- read.table(file = "ClinGen_gene_curation_list_GRCh38.tsv", header = F, 
+                               sep = "\t", stringsAsFactors = F)
+
+#Giving names to the ClinGen Database since there are no header names. 
+colnames(ClinGen_database) <- c("Gene Symbol", 
+                                "Gene ID",
+                                "cytoBand",
+                                "Genomic Location",
+                                "Haploinsufficiency Score",
+                                "Haploinsufficiency Description",
+                                "Haploinsufficiency PMID1",
+                                "Haploinsufficiency PMID2",
+                                "Haploinsufficiency PMID3",
+                                "Triplosensitivity Score",
+                                "Triplosensitivity Description",
+                                "Triplosensitivity PMID1",
+                                "Triplosensitivity PMID2",
+                                "Triplosensitivity PMID3",
+                                "Date Last Evaluated",
+                                "Loss phenotype OMIM ID",
+                                "Triplosensitive phenotype OMIM ID")
+
+#Reads in ExAC database
+ExAC_database <- read.table(file = "forweb_cleaned_exac_r03_march16_z_data_pLI_CNV-final.txt", 
+                            header = T, stringsAsFactors = F)
+
+#Creating setA that is defined as haploinsufficient according to ExAC, pLI >= 0.2.
+set_A_Exac <- ExAC_database$gene[ExAC_database$pLI >= 0.2]
+
+# ClinGen Haploinsufficient score of 1,2, and 3. 
+Haploinsufficiency_Score_1 <- ClinGen_database$`Gene Symbol`[
+  ClinGen_database$`Haploinsufficiency Score` == 1]
+Haploinsufficiency_Score_2 <- ClinGen_database$`Gene Symbol`[
+  ClinGen_database$`Haploinsufficiency Score` == 2]
+Haploinsufficiency_Score_3 <- ClinGen_database$`Gene Symbol`[
+  ClinGen_database$`Haploinsufficiency Score` == 3]
+
+Haploinsufficiency_Score_1_2_3 <- c(Haploinsufficiency_Score_1,
+                                    Haploinsufficiency_Score_2, 
+                                    Haploinsufficiency_Score_3)
+
+# install.packages("dplyr")
+library("dplyr")
+
+# Creating set A that haploinsufficient according to both ExAC, pLI >= 0.2 but not 
+# in ClinGen. This gives us 6686 genes.
+set_A <- setdiff(set_A_Exac, Haploinsufficiency_Score_1_2_3)
+
+# Creating set B; matching genes from SetA and ExAC databases. This gives us 367 genes.
+set_B <- Haploinsufficiency_Score_1_2_3[Haploinsufficiency_Score_1_2_3 %in% set_A_Exac]
+
+# GO Enrichment analysis was performed for Set A and Set B using the gprofiler2 package. 
+# install.packages("gprofiler2")
+library("gprofiler2")
+
+# Finds all top GO Functions for set A.
+GO_Set_A <-gost(query=set_A, organism = "hsapiens")
+
+# The top GO terms for Set A are listed fpr biological processes, molecular 
+# function and cellular component.
+head(GO_Set_A$result$term_name[GO_Set_A$result$source == "GO:BP"])
+head(GO_Set_A$result$term_name[GO_Set_A$result$source == "GO:MF"])
+head(GO_Set_A$result$term_name[GO_Set_A$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for set A.
+gostplot(GO_Set_A, capped = F, interactive = T)
+
+# Finds all top GO Functions for set B.
+GO_Set_B <- gost(query=set_B, organism = "hsapiens")
+
+# The top GO terms for Set B are listed fpr biological processes, molecular 
+# function and cellular component.
+head(GO_Set_B$result$term_name[GO_Set_B$result$source == "GO:BP"])
+head(GO_Set_B$result$term_name[GO_Set_B$result$source == "GO:MF"])
+head(GO_Set_B$result$term_name[GO_Set_B$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for set B.
+gostplot(GO_Set_B, capped = F, interactive = F)
+
+
+#### 2. Comparing the distribution of protein interaction degree ####
+# (number of interactions) of genes present in set A with set B.
+
+# Read in BIOGRID file
+BIOGRID_file <- read.delim(file = "BIOGRID-ALL-3.5.185.tab2.txt", stringsAsFactors = F)
+
+# This will include only physical PPIS and exclude any genetic interactions.
+PPI_BIOGRID <- BIOGRID_file[BIOGRID_file$Experimental.System.Type == "physical", ]
+
+#This creates an empty list to be added to for the loop below.
+interactions <- list()
+
+# The loop will find all protein interactions in the BIOGRID database. 
+PPI <- c(PPI_BIOGRID$Official.Symbol.Interactor.A)
+for (i in unique(PPI)){
+  interactions[[i]] <- PPI_BIOGRID$Official.Symbol.Interactor.B[
+    PPI_BIOGRID$Official.Symbol.Interactor.A == i]
+}
+
+# This accounts for duplicate protein interactions.
+unique_interactions = lapply(interactions, function(x) (unique(x)))
+
+#Finds the number of interactions for Set A
+set_A_PPI <- lapply(set_A, function(x) unique_interactions[[x]])
+
+# This gives each list the appropiate gene name for Set A.
+names(set_A_PPI) <- set_A
+
+# Display the number of interactors for each gene
+number_PPI_set_A <- unlist(lapply(set_A_PPI, length))
+
+#Finds the number of interactions for Set B
+set_B_PPI <- lapply(set_B, function(x) unique_interactions[[x]])
+names(set_B_PPI) <- set_B
+
+# Finds the number of interactors
+number_PPI_set_B <-unlist(lapply(set_B_PPI, length))
+
+#Plots the distribution of proteins interactors for Set A and Set B. 
+# The majority of interactors have less than 500 PPIs in Set A. 
+# In set B, the majority of interactors have less than 200 PPIs.
+{
+par(mfrow =c(1,2))
+hist(number_PPI_set_A, xlab = "Number of PPIs", main = "Distribution of PPIs in Set A", 
+     ylab = "Frequency of interactors", ylim = c(0, 7000), las = 1)
+hist(number_PPI_set_B, main = "Distribution of PPIs in Set B", xlab = "Number of PPIs", 
+     ylab = "Frequency of interactors", ylim = c(0, 350), las = 1,)
+}
+
+# install.packages("nortest")
+library("nortest")
+
+# Performing Anderson Darling test to determine whether it follows a normal distribution
+# for Set A. Since p-value < 2.2e-16, this means that the distribution
+# of the data is significantly different than a normal distribution.
+ad.test(number_PPI_set_A)
+
+# Performing Shapiro-Wilks test to determine whether it follows a normal
+# distribution for Set B. Since p-value < 2.2e-16, this means that the distribution
+# of the data is significantly different than a normal distribution. 
+shapiro.test(number_PPI_set_B)
+
+# Since both data does not follow a normal distribution, a Wilcoxon test was performed.
+# The p-value was determined to be p-value = 9.718e-09 which is less than the significant 
+# value, 0.05. Therefore, this suggests that there is a significant difference of PPIs 
+# between Set A versus Set B. 
+wilcox.test(number_PPI_set_A, number_PPI_set_B)
+
+
+#### 3. The following section will compare the distributions of microRNA-gene target ####
+# interaction (number of miRNAs targeting a gene) present between both set A and set B.
+
+# Read in miRTartBase file
+miRTarBase_MTI_file <- read.delim("miRTarBase_MTI.txt", stringsAsFactors = F)
+
+#There are other species in the database but we are only interested in human genes.
+#This will create a dataframe with only Homo sapiens as the sole species.
+miRTarBase_MTI_Homo_sapiens <- miRTarBase_MTI_file[miRTarBase_MTI_file$Species..miRNA.
+                                                   == "Homo sapiens", ]
+
+# This loop will find all miRNA target associated with each unique gene into a list.
+miRNA_interactions <- c() #This creates an empty list to be added to.
+miRNA_target <- c(miRTarBase_MTI_Homo_sapiens$Target.Gene)
+for (i in unique(miRNA_target)){
+  miRNA_interactions[[i]] <- miRTarBase_MTI_Homo_sapiens$miRNA[
+    miRTarBase_MTI_Homo_sapiens$Target.Gene== i]
+}
+
+# This will find all miRNA associated with each gene in Set A.
+set_A_miRNA <- lapply(set_A, function(x) miRNA_interactions[[x]])
+names(set_A_miRNA) <- set_A
+set_A_number_miRNA <- unlist(lapply(set_A_miRNA, length))
+
+# This will find all miRNA targets of each gene in Set B.
+set_B_miRNA <- lapply(set_B, function(x) miRNA_interactions[[x]])
+names(set_B_miRNA) <- set_B
+set_B_number_miRNA <- unlist(lapply(set_B_miRNA, length))
+
+
+# Plots the distribution of proteins interactors for Set A. From the graph,
+# the majoirty of target genes have less than 100 miRNA targets in both Set A 
+# and Set B.
+{
+par(mfrow =c(1,2))
+hist(set_A_number_miRNA, main = "Set A miRNA targets distribution",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 6000), las = 1)
+hist(set_B_number_miRNA, main = "Set B miRNA targets distribution",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 300), las = 1)
+}
+
+# Performing Anderson Darling test to determine whether it follows a normal distribution
+# for Set A miRNA targets. Since p-value < 2.2e-16, this means that the distribution
+# of the data is significantly different than a normal distribution.
+ad.test(set_A_number_miRNA)
+
+# Performing Shapiro-Wilks test to determine whether it follows a normal
+# distribution for Set B. Since p-value < 2.2e-16, this means that the distribution
+# of the data is significantly different than a normal distribution.
+shapiro.test(set_B_number_miRNA)
+
+# Since both data do not follow a normal distribution, a Wilcoxon test was performed.
+# The p-value was determined to be p-value = 7.734e-07, less than the significant value,
+# 0.05. Therefore, this suggests that there is a significant difference of miRNA targets
+# between Set A versus Set B.
+wilcox.test(set_A_number_miRNA, set_B_number_miRNA)
+
+
+#### 4. The following is creating an even more stringent defintion; genes that have ####
+# ExAC pLI values greater than or equal to 0.9 and ClinGen haploinsufficiency scores of
+# 2 and 3 or only just 3. GO terms, protein-protein interactions, and miRNA targets
+# will also be analyzed as previously done with Set A and Set B.
+
+# This will find all of the genes that have pLI values greater than or equal to 0.9.
+Exac_pLI_0.9 <- ExAC_database$gene[ExAC_database$pLI >= 0.9]
+
+#Creating set A1 that is haploinsufficient according to both ExAC, pLI >= 0.9 but not 
+# in ClinGen. This gives us 2989 genes.
+Haploinsufficiency_Score_2_3 <- c(Haploinsufficiency_Score_2, Haploinsufficiency_Score_3)
+Set_A1<- setdiff(Exac_pLI_0.9, Haploinsufficiency_Score_2_3)
+  
+# Creating set B1 is haploinsufficient according to both ExAC, pLI >= 0.9 and ClinGen 
+# scores of 2 and 3. This gives us 241 genes.
+Haploinsufficiency_Score_2_3 <-c(Haploinsufficiency_Score_2, Haploinsufficiency_Score_3)
+set_B1 <- Haploinsufficiency_Score_2_3[Haploinsufficiency_Score_2_3 %in% Exac_pLI_0.9]
+
+# Finds the GO terms for Set A1
+GO_Set_A1 <- gost(query=Set_A1, organism = "hsapiens")
+
+# The top GO terms for Set A1 are listed below for biological processes, molecular 
+# function and cellular component.
+head(GO_Set_A1$result$term_name[GO_Set_A1$result$source == "GO:BP"])
+head(GO_Set_A1$result$term_name[GO_Set_A1$result$source == "GO:MF"])
+head(GO_Set_A1$result$term_name[GO_Set_A1$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for set A1.
+gostplot(GO_Set_A1, capped = F, interactive = F)
+
+#Finds the GO terms for Set B1.
+GO_Set_B1 <- gost(query=set_B1, organism = "hsapiens")
+
+# The top GO terms for Set A1 are listed below for biological processes, molecular 
+# function and cellular component.
+head(GO_Set_B1$result$term_name[GO_Set_B1$result$source == "GO:BP"])
+head(GO_Set_B1$result$term_name[GO_Set_B1$result$source == "GO:MF"])
+head(GO_Set_B1$result$term_name[GO_Set_B1$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for set B1.
+gostplot(GO_Set_B1, capped = F, interactive = F)
+
+#Finds the number of protein interactions for Set A1.
+set_A1_PPI <- lapply(Set_A1, function(x) unique_interactions[[x]])
+names(set_A1_PPI) <- Set_A1
+set_A1_PPI_num <- unlist(lapply(set_A1_PPI, length))
+
+#Finds the number of protein interactions for Set B1.
+set_B1_PPI <- lapply(set_B1, function(x) unique_interactions[[x]])
+names(set_B1_PPI) <- set_B1
+set_B1_PPI_n <- unlist(lapply(set_B1_PPI, length))
+
+#Plots the distribution of PPIs in Set A1 and B1 in a histogram. From this plot, the majority
+# of interactors have less than 500 PPIs in set A1 and less than 200 PPIs in Set B1.
+{
+par(mfrow =c(1,2))
+hist(set_A1_PPI_num, main = "Distribution of PPI in Set A1",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 3000), las = 1)
+hist(set_B1_PPI_n, main = "Distribution of PPI in Set B1",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 250), las = 1)
+}
+
+# Performing Shapiro-Wilks test to determine whether it follows a normal
+# distribution for both stringently defined sets. Since the p-values < 2,2e -16 
+# are both  less than 0.05, this indicates that the that the distribution of 
+# both datasets are significantly different from a normal distribution.
+shapiro.test(set_A1_PPI_num)
+shapiro.test(set_B1_PPI_n)
+
+# Comparing both stringently defined values show that the p value is 0.2508, which
+# is greater than the p value of 0.05. This suggests that there are no significant
+# differences in PPIs properties between the 2 sets.
+wilcox.test(set_A1_PPI_num, set_B1_PPI_n)
+
+
+# This will find all miRNA targets of each gene in Set B2.
+set_A1_miRNA <- lapply(Set_A1, function(x) miRNA_interactions[[x]])
+names(set_A1_miRNA) <- Set_A1
+set_A1_miRNA_no <- unlist(lapply(set_A1_miRNA, length))
+
+set_B1_miRNA <- lapply(set_B1, function(x) miRNA_interactions[[x]])
+names(set_B1_miRNA) <- set_B1
+set_B1_miRNA_no <- unlist(lapply(set_B1_miRNA, length))
+
+#Plots the distribution of miRNA targets in Set B1. From this plot, the majority
+# of genes have less than 500 miRNA targets in Set A1 and less than 100 miRNA
+# targets in set B1.
+{
+par(mfrow =c(1,2))
+hist(set_A1_miRNA_no, main = "miRNA targets distribution Set A1",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 2500), las = 1)
+hist(set_B1_miRNA_no, main = "miRNA targets distribution Set B1",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 200), las = 1)
+}
+
+# Performing Shapiro-Wilks test to determine whether miRNA targets follows a normal
+# distribution for both stringently defined sets. Since the p-values < 2,2e -16 
+# are both are less than 0.05, this indicates that the that the distribution of 
+# both datasets are significantly different from a normal distribution.
+shapiro.test(set_A1_miRNA_no)
+shapiro.test(set_B1_miRNA_no)
+
+# Comparing both stringently defined values show that the p value is 0.1141, which
+# is greater than the p value of 0.05. This suggests that there are no significant
+# differences in miRNA targets properties between set A1 and B1.
+wilcox.test(set_A1_miRNA_no, set_B1_miRNA_no)
+
+
+
+#Creating set A2 that is haploinsufficient according to both ExAC, pLI >= 0.9 but not ClinGen.
+# This gives us 3026 genes.
+Set_A2 <- setdiff(Exac_pLI_0.9, Haploinsufficiency_Score_3)
+
+#Finds the GO terms for Set A2.
+GO_Set_A2 <-gost(query=Set_A2, organism = "hsapiens")
+
+#The top GO terms for Set A2 are listed below.
+head(GO_Set_A2$result$term_name[GO_Set_A2$result$source == "GO:BP"])
+head(GO_Set_A2$result$term_name[GO_Set_A2$result$source == "GO:MF"])
+head(GO_Set_A2$result$term_name[GO_Set_A2$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for set A2.
+gostplot(GO_Set_A2, capped = F, interactive = F)
+
+# This is defining a set as having the pLI threshold of >= 0.9 and ClinGen scores
+# of just '3’. This gives us 204 genes.
+set_B2 <- Haploinsufficiency_Score_3[Haploinsufficiency_Score_3 %in% Exac_pLI_0.9]
+
+#Finds the GO terms for Set B2.
+GO_Set_B2 <-gost(query=set_B2, organism = "hsapiens")
+
+# Plots Manhattan plot of functional enrichment results for set B2.
+gostplot(GO_Set_B2, capped = F, interactive = F)
+
+# The top GO terms for Set B2 are listed below for biological processes, molecular 
+# function and cellular component.
+head(GO_Set_B2$result$term_name[GO_Set_B2$result$source == "GO:BP"])
+head(GO_Set_B2$result$term_name[GO_Set_B2$result$source == "GO:MF"])
+head(GO_Set_B2$result$term_name[GO_Set_B2$result$source == "GO:CC"])
+
+#Finds the number of interactions for Set B2.
+set_A2_PPI <- lapply(Set_A2, function(x) unique_interactions[[x]])
+names(set_A2_PPI) <- Set_A2
+set_A2_PPI_n <- unlist(lapply(set_A2_PPI, length))
+
+set_B2_PPI <- lapply(set_B2, function(x) unique_interactions[[x]])
+names(set_B2_PPI) <- set_B2
+set_B2_PPI_n <- unlist(lapply(set_B2_PPI, length))
+
+#Plots the distribution of PPIs in Set B2. From this plot, ther are
+# less than 500 PPIs in set A2 and less than 200 PPIs in set B2.
+{par(mfrow = c(1,2))
+hist(set_A2_PPI_n, main = "Distribution of PPIs in Set A2",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 3000), las = 1) 
+hist(set_B2_PPI_n, main = "Distribution of PPIs in Set B2",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 200), las = 1)
+}
+
+# Performing Shapiro-Wilks test to determine whether PPIs follows a normal
+# distribution for both stringently defined sets. Since the p-values < 2,2e -16 
+# are both are less than 0.05, this indicates that the that the distribution of 
+# both datasets are significantly different from a normal distribution.
+shapiro.test(set_A2_PPI_n)
+shapiro.test(set_B2_PPI_n)
+
+# Comparing both stringently defined values show that the p value is 0.1847, which
+# is greater than the p value of 0.05. This suggests that there are no significant
+# differences in miRNA targets properties between set A2 and B2.
+wilcox.test(set_A2_PPI_n, set_B2_PPI_n)
+
+#Finds the number of miRNA targets for Set B2
+set_A2_miRNA <- lapply(Set_A2, function(x) miRNA_interactions[[x]])
+names(set_A2_miRNA) <- Set_A2
+set_A2_number_miRNA <- unlist(lapply(set_A2_miRNA, length))
+
+#Finds the number of miRNA targets for Set B2
+set_B2_miRNA <- lapply(set_B2, function(x) miRNA_interactions[[x]])
+names(set_B2_miRNA) <- set_B2
+set_B2_number_miRNA <- unlist(lapply(set_B2_miRNA, length))
+
+#Plots the distribution of miRNA targets in Set B2.From this plot, the majority
+# interactors have less than 100 PPIs.
+{par(mfrow = c(1,2))
+hist(set_A2_number_miRNA, main = "miRNA targets distribution Set A2",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 2500), las = 1)
+hist(set_B2_number_miRNA, main = "miRNA targets distribution Set B2",
+     xlab = "Number of miRNA interactions", ylab = "Frequency of targets",
+     ylim = c(0, 200), las = 1)
+}
+
+# Performing Shapiro-Wilks test to determine whether miRNA targets follows a normal
+# distribution for both stringently defined sets. Since p-values < 2,2e -16 
+# are both are less than 0.05, this indicates that the that the distribution of 
+# both datasets are significantly different from a normal distribution.
+shapiro.test(set_A2_number_miRNA)
+shapiro.test(set_B2_number_miRNA)
+
+# Comparing both stringently defined values show that the p value is 0.01558, just 
+# barely less than the p value of 0.05. This suggests that there are some 
+# significant differences in miRNA targets properties between set A2 and B2.
+wilcox.test(set_A2_number_miRNA, set_B2_number_miRNA)
+
+
+
+# 5. Determine whether different genes are affected by rare mutations for Set A and B.
+# According to ExAC, n_lof = 0 means that there are no rare loss of function variants,
+# therefore, these are considered 'common' genes.
+
+# This finds all the genes that have n lof values of 0.
+n_lof_0 <-ExAC_database$gene[ExAC_database$n_lof == 0]
+
+# This will find "common" genes based on whether they have n_lof value of 0.
+common_genes_set_A <- set_A[set_A %in% n_lof_0]
+
+# GO term analysis for common genes in set A.
+GO_common_Set_A <-gost(query=common_genes_set_A, organism = "hsapiens")
+
+# The top GO terms for common genes in set A are listed below for biological processes, 
+# molecular function and cellular component.
+head(GO_common_Set_A$result$term_name[GO_common_Set_A$result$source == "GO:BP"])
+head(GO_common_Set_A$result$term_name[GO_common_Set_A$result$source == "GO:MF"])
+head(GO_common_Set_A$result$term_name[GO_common_Set_A$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for common genes in set A.
+gostplot(GO_common_Set_A, capped = F, interactive = F)
+
+# Finding all the rare genes that have n_lof values not equal to 0.
+rare_genes_set_A <- set_A[!set_A %in% n_lof_0]
+
+# GO term analysis for rare genes in set A.
+GO_rare_Set_A <-gost(query=rare_genes_set_A, organism = "hsapiens")
+
+# The top GO terms for rare genes in set A are listed below for biological processes, 
+# molecular function and cellular component.
+head(GO_rare_Set_A$result$term_name[GO_rare_Set_A$result$source == "GO:BP"])
+head(GO_rare_Set_A$result$term_name[GO_rare_Set_A$result$source == "GO:MF"])
+head(GO_rare_Set_A$result$term_name[GO_rare_Set_A$result$source == "GO:CC"])
+
+# Plots Manhattan plot of functional enrichment results for rare genes in set A.
+gostplot(GO_rare_Set_A, capped = F, interactive = F)
+
+# Finds the protein distribution for common genes n Set A.
+common_PPI_set_A <- lapply(common_genes_set_A, function(x) unique_interactions[[x]])
+names(common_PPI_set_A) <- common_genes_set_A
+common_PPI_set_A_no <- unlist(lapply(common_PPI_set_A, length))
+                              
+rare_PPI_set_A <- lapply(rare_genes_set_A, function(x) unique_interactions[[x]])
+names(rare_PPI_set_A) <- rare_genes_set_A
+rare_PPI_set_A_no <- unlist(lapply(rare_PPI_set_A, length))
+
+# This plots the PPIs distribution of common and rare genes in Set A.
+# Both have genes that have less than 500 PPIs.
+{par(mfrow =c(1,2))
+hist(unlist(lapply(common_PPI_set_A, length)),
+     main = "Common PPIs distribution in Set A", xlab = "Number of PPIs",
+     ylim = c(0, 2000), las = 1)
+hist(unlist(lapply(rare_PPI_set_A, length)),
+     main = "Distribution of rare PPIs in Set A", xlab = "Number of PPIs",
+     ylim = c(0, 5500), las = 1)
+}
+
+# Both values were determined to be p-value < 2.2e-16. This is less than 0.05 
+# which indicates that the data is significantly different from normal
+# distribution.
+shapiro.test(common_PPI_set_A_no)
+shapiro.test(rare_PPI_set_A_no)
+
+# Since the p-value = 0.4269, this suggests that this is not significant and rare genes in 
+# Set A are not different in terms of PPIs from common genes.
+wilcox.test(common_PPI_set_A_no, rare_PPI_set_A_no)
+
+# Finds the miRNA distribution for common genes in Set A.
+common_miRNA_set_A <- lapply(common_genes_set_A, function(x) miRNA_interactions[[x]])
+names(common_miRNA_set_A) <- common_genes_set_A
+common_miRNA_set_A_no <- unlist(lapply(common_miRNA_set_A, length))
+
+# Finds the miRNA distribution for rare genes on Set A.
+rare_miRNA_set_A <- lapply(rare_genes_set_A, function(x) miRNA_interactions[[x]])
+names(rare_miRNA_set_A) <- rare_genes_set_A
+rare_miRNA_set_A_no <- unlist(lapply(rare_miRNA_set_A, length))
+
+
+# Plots the miRNA distribution of miRNA targets for both rare and common genes,
+# Both sets have less than 200 miRNA targets.
+{par(mfrow =c(1,2))
+hist(common_miRNA_set_A_no,
+     main = "Common miRNA targets in Set A",
+     xlab = "Number of PPIs", ylim = c(0, 1600), las = 1)
+hist(unlist(lapply(rare_miRNA_set_A, length)),
+     main = "Rare miRNA targets in Set A",
+     xlab = "Number of PPIs",  ylim = c(0, 4500), las = 1)
+}
+
+# This is to determine whether the graph follows a normal distribution.
+# The p-values were determined to be  < 2.2e-16 for both. This means that it does
+# not follow a normal distribution.
+shapiro.test(common_miRNA_set_A_no)
+shapiro.test(rare_miRNA_set_A_no)
+
+# The p-value = 0.02209. This suggests that there is a significant difference between 
+# rare and common genes in terms of miRNA properties in Set A.
+wilcox.test(common_miRNA_set_A_no, rare_miRNA_set_A_no)
+
+
+#### This will find "common" genes based on whether they have n_lof value of 0 in Set B. ####
+common_genes_set_B <- set_B[set_B %in% n_lof_0]
+
+# Finds the GO terms associated with common genes in set B.
+GO_common_Set_B <-gost(query=common_genes_set_B, organism = "hsapiens")
+
+# The top GO terms for common genes in set B are listed below for biological processes, 
+# molecular function and cellular component.
+head(GO_common_Set_B$result$term_name[GO_common_Set_B$result$source == "GO:BP"])
+head(GO_common_Set_B$result$term_name[GO_common_Set_B$result$source == "GO:MF"])
+head(GO_common_Set_B$result$term_name[GO_common_Set_B$result$source == "GO:CC"])
+
+# Plots a Manhattan plot for all GO terms for common genes for Set B.
+gostplot(GO_common_Set_B, capped = F, interactive = F)
+
+# This will find rare genes based on whether they do not n_lof value of 0 in Set B.
+rare_genes_set_B <- set_B[!set_B %in% n_lof_0]
+
+# Finds the GO terms associated with rare genes in set B.
+GO_rare_Set_B <-gost(query=rare_genes_set_B, organism = "hsapiens")
+
+# The top GO terms for rare genes in set B are listed below for biological processes, 
+# molecular function and cellular component.
+head(GO_rare_Set_B$result$term_name[GO_rare_Set_B$result$source == "GO:BP"])
+head(GO_rare_Set_B$result$term_name[GO_rare_Set_B$result$source == "GO:MF"])
+head(GO_rare_Set_B$result$term_name[GO_rare_Set_B$result$source == "GO:CC"])
+
+# Plots a Manhattan plot for all GO terms for rare genes for Set B.
+gostplot(GO_rare_Set_B, capped = F, interactive = F)
+
+common_PPI_set_B <- lapply(common_genes_set_B, function(x) unique_interactions[[x]])
+names(common_PPI_set_B) <- common_genes_set_B
+common_PPI_set_B_no <- unlist(lapply(common_PPI_set_B, length))
+
+rare_PPI_set_B <- lapply(rare_genes_set_B, function(x) unique_interactions[[x]])
+names(rare_PPI_set_B) <- rare_genes_set_B
+rare_PPI_set_B_no <- unlist(lapply(rare_PPI_set_B, length))
+
+# This plots the PPIs distribution of common and rare genes in Set B. Majority of genes 
+# have less than 100 PPIs in common genes and rare genes.
+{par(mfrow =c(1,2))
+hist(common_PPI_set_B_no, main = "Distribution of common PPIs in Set B",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 150), las = 1)
+hist(common_PPI_set_B_no, main = "Distribution of rare PPIs in Set B",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 250), las = 1)
+}
+
+# Since p-value < 2.2e-16, this indicates that it does not follow a normal
+# distribution.
+shapiro.test(rare_PPI_set_B_no)
+shapiro.test(common_PPI_set_B_no)
+
+# p-value = 0.8045, therefore this is not significant and there are no significant
+# differences in PPIs between rare and common genes in Set B.
+wilcox.test(common_PPI_set_B_no, rare_PPI_set_B_no)
+
+
+# Finds the miRNA distribution for common genes in Set B
+common_miRNA_set_B <- lapply(common_genes_set_B, function(x) miRNA_interactions[[x]])
+names(common_genes_set_B) <- common_genes_set_B
+common_miRNA_set_B_no <- unlist(lapply(common_miRNA_set_B, length))
+  
+# Finds the miRNA distribution for rare genes on Set A.
+rare_miRNA_set_B <- lapply(rare_genes_set_B, function(x) miRNA_interactions[[x]])
+names(rare_miRNA_set_B) <- rare_genes_set_B
+rare_miRNA_set_B_no <- unlist(lapply(rare_miRNA_set_B, length))
+
+# This plots the PPIs distribution of common and rare genes in Set B. Majority of genes 
+# have less than 50 miRNA targets in common genes and less than 100 in rare genes.
+{par(mfrow =c(1,2))
+hist(common_miRNA_set_B_no,
+     main = "Common miRNA targets distribution",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 100), las = 1)
+hist(rare_miRNA_set_B_no,
+     main = "Rare miRNA targets distribution",
+     xlab = "Number of PPIs", ylab = "Frequency of interactors",
+     ylim = c(0, 200), las = 1)
+}
+
+# Statistically determine whether the data is normally distributed.
+#The p-values are 5.134e-14 and and < 2.2e-16 indiciatinf that the data is significantly
+# different from a normal distribution.
+shapiro.test(common_miRNA_set_B_no)
+shapiro.test(rare_miRNA_set_B_no)
+
+# The p-value was determined to be 0.6831. This suggests that there is no statistically
+# significant difference between common and rare genes in Set B.
+wilcox.test(common_miRNA_set_B_no,rare_miRNA_set_B_no)
+```
+
